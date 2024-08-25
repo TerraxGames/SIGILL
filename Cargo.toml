@@ -1,0 +1,21 @@
+[package]
+name = "sigill"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Housekeeping
+log = "0.4"
+colored = "2"
+thiserror = "1"
+anyhow = "1"
+
+# Utilities
+hecs = "0.10"
+glam = "0.29.0"
+sigill-derive = { path = "sigill-derive" }
+
+# Rendering
+ash = "0.38"
+ash-window = "0.13.0"
+winit = "0.30"

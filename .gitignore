@@ -1,0 +1,11 @@
+# Misc
+.env
+
+# VSCode
+/.vscode
+
+# Rust
+/target
+
+# MacOS
+.DS_Store
