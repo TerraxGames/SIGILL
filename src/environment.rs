@@ -1,5 +1,3 @@
-use crate::client::rendering::RenderData;
-
 #[macro_export]
 macro_rules! wrong_side {
     ( $side:expr ) => {
@@ -30,12 +28,6 @@ macro_rules! dedicated_server_only {
     ( $side:expr, $code:expr ) => {
         $crate::sided!($crate::environment::Side::DedicatedServer, $side, $code)
     };
-}
-
-pub struct ClientData {
-    pub window: Option<winit::window::Window>,
-    pub attributes: winit::window::WindowAttributes,
-    pub render_data: Option<RenderData>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

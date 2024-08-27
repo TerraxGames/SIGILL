@@ -1,5 +1,5 @@
-use client::rendering::RenderData;
-use environment::{ClientData, Side};
+use client::{rendering::RenderData, ClientData};
+use environment::Side;
 use hecs::World;
 use winit::{event::WindowEvent, event_loop::{ControlFlow, EventLoop}, window::{Window, WindowAttributes}};
 
@@ -11,7 +11,6 @@ mod event;
 mod environment;
 mod client;
 mod util;
-mod drop;
 
 struct App {
     side: Side,
