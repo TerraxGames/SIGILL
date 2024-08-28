@@ -35,11 +35,25 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            let origin = {
+            let module_path = {
                 if let Some(module_path) = record.module_path() {
                     format!("({}) ", module_path)
                 } else {
                     String::new()
+                }
+            };
+            let target = {
+                if record.module_path().unwrap_or_default() != record.target() {
+                    format!("({}) ", record.target())
+                } else {
+                    String::new()
+                }
+            };
+            let origin = {
+                if target.is_empty() {
+                    module_path
+                } else {
+                    target
                 }
             };
             println!("{origin}{}   {}", format_level(record.level()), colorize_args(record.level(), record.args()));

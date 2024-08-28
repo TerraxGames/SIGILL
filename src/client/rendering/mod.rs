@@ -7,8 +7,12 @@ use winit::raw_window_handle::{HandleError, HasDisplayHandle};
 use crate::*;
 
 pub mod vulkan;
+pub mod log;
 
 pub struct RenderData {
+    pub debug_utils_messenger: Option<vulkan::DebugUtilsMessenger>,
+
+    // SAFETY: Keep the `instance` field after any fields that depend on it.
     pub instance: vulkan::Instance,
 
     // SAFETY: Keep the `entry` field at the end of the struct declaration so that the `entry` field is dropped last.
@@ -46,14 +50,16 @@ pub fn init<T>(app: &mut App, event_loop: &EventLoop<T>) -> Result<(), RenderErr
         .engine_version(constants::ENGINE_VERSION)
         .api_version(constants::API_VERSION);
 
-    // Get window extensions
-    let extensions = ash_window::enumerate_required_extensions(event_loop.display_handle()?.as_raw())?;
+    // Get required extensions
+    let mut extensions = ash_window::enumerate_required_extensions(event_loop.display_handle()?.as_raw())?.to_vec();
+    extensions.push(ash::ext::debug_utils::NAME.as_ptr());
 
     // Create instance
     let mut instance_info = vk::InstanceCreateInfo::default()
         .application_info(&app_info)
-        .enabled_extension_names(extensions);
+        .enabled_extension_names(extensions.as_slice());
     if constants::ENABLE_VALIDATION_LAYERS {
+        // Ensure the required validation layers are available.
         let available_layers = unsafe { entry.enumerate_instance_layer_properties()? };
         
         for required_validation_layer_bytes in constants::REQUIRED_VALIDATION_LAYERS {
@@ -71,7 +77,13 @@ pub fn init<T>(app: &mut App, event_loop: &EventLoop<T>) -> Result<(), RenderErr
     }
     let instance = vulkan::Instance::new(&entry, &instance_info)?;
 
-    app.client_data_mut().render_data = Some(RenderData { entry, instance });
+    let mut debug_utils_messenger = None;
+    if cfg!(debug_assertions) {
+        // Set up debugging
+        debug_utils_messenger = Some(log::init_vulkan_debug_callback(&instance)?);
+    }
+
+    app.client_data_mut().render_data = Some(RenderData { entry, debug_utils_messenger, instance });
 
     Ok(())
 }

@@ -1,4 +1,4 @@
-use std::{ffi::{c_char, CStr, CString}, ptr::slice_from_raw_parts, sync::LazyLock};
+use std::{ffi::{c_char, CString}, sync::LazyLock};
 
 use ash::vk;
 
@@ -26,3 +26,4 @@ pub const LOG_LEVEL: log::LevelFilter = {
         log::LevelFilter::Info
     }
 };
+pub const VULKAN_DEBUG_MESSAGE_TYPES: vk::DebugUtilsMessageTypeFlagsEXT = vk::DebugUtilsMessageTypeFlagsEXT::from_raw(vk::DebugUtilsMessageTypeFlagsEXT::GENERAL.as_raw() | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE.as_raw() | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION.as_raw() | vk::DebugUtilsMessageTypeFlagsEXT::DEVICE_ADDRESS_BINDING.as_raw());
