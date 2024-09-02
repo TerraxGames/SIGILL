@@ -75,7 +75,11 @@ impl App {
 
 impl winit::application::ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let init_renderer = self.client_data().unwrap().window.is_none();
         self.client_data_mut().window = Some(event_loop.create_window(self.attributes()).unwrap());
+        if init_renderer {
+            client::rendering::init(self, event_loop).expect("failed to initialize rendering")
+        }
     }
 
     fn window_event(
@@ -117,9 +121,6 @@ fn main() {
     let mut app = App::new_client(window_attributes);
 
     info!("Initializing with side `{}`", app.side());
-
-    // Initialize rendering
-    client::rendering::init(&mut app, &event_loop).expect("failed to initialize rendering");
 
     // Start event loop
     event_loop.run_app(&mut app).unwrap();

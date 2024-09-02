@@ -4,14 +4,14 @@ use ash::vk;
 
 use crate::constants;
 
-use super::{vulkan, RenderResult};
+use super::{vulkan::{self, DebugUtilsMessenger}, RenderResult};
 
-pub fn init_vulkan_debug_callback(instance: &vulkan::Instance) -> RenderResult<vulkan::DebugUtilsMessenger> {
+pub fn init_vulkan_debug_callback(instance: &mut vulkan::Instance) -> RenderResult<&DebugUtilsMessenger> {
     let create_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
         .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE | vk::DebugUtilsMessageSeverityFlagsEXT::INFO | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
         .message_type(constants::VULKAN_DEBUG_MESSAGE_TYPES)
         .pfn_user_callback(Some(vulkan_debug_callback));
-    instance.create_debug_utils_messenger_ext(&create_info)
+    Ok(instance.create_debug_utils_messenger_ext(&create_info)?)
 }
 
 unsafe extern "system" fn vulkan_debug_callback(

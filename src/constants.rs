@@ -1,6 +1,6 @@
 use std::{ffi::{c_char, CString}, sync::LazyLock};
 
-use ash::vk;
+use ash::vk::{self, PhysicalDeviceFeatures, QueueFlags};
 
 // Info
 pub const NAME: &'static str = "SIGILL";
@@ -10,6 +10,8 @@ pub const VERSION: u32 = vk::make_api_version(0, 0, 1, 0);
 pub const ENGINE_VERSION: u32 = VERSION;
 /// The Vulkan API version.
 pub const API_VERSION: u32 = vk::API_VERSION_1_3;
+pub const API_VERSION_MAJOR: u32 = vk::api_version_major(API_VERSION);
+pub const API_VERSION_MINOR: u32 = vk::api_version_minor(API_VERSION);
 
 // Rendering
 pub const REQUIRED_VALIDATION_LAYERS: &'static [*const c_char] = &[
@@ -17,6 +19,23 @@ pub const REQUIRED_VALIDATION_LAYERS: &'static [*const c_char] = &[
     c"VK_LAYER_KHRONOS_validation".as_ptr()
 ];
 pub const ENABLE_VALIDATION_LAYERS: bool = cfg!(debug_assertions);
+pub const REQUIRED_QUEUE_FAMILIES: LazyLock<QueueFlags> = LazyLock::new(|| vk::QueueFlags::GRAPHICS);
+pub const ENABLED_DEVICE_FEATURES: LazyLock<PhysicalDeviceFeatures> = LazyLock::new(||
+    PhysicalDeviceFeatures::default()
+        .geometry_shader(true)
+);
+pub const ENABLED_EXTENSIONS: &'static [*const c_char] = &[
+    ash::ext::debug_utils::NAME.as_ptr(),
+];
+pub const ENABLED_DEVICE_EXTENSIONS: &'static [*const c_char] = &[
+    ash::khr::swapchain::NAME.as_ptr(),
+];
+/// A list of queue families used at runtime.
+pub const QUEUE_FAMILIES: LazyLock<&'static [vk::QueueFlags]> = LazyLock::new(||
+    &[
+        vk::QueueFlags::GRAPHICS,
+    ]
+);
 
 // Logging
 pub const LOG_LEVEL: log::LevelFilter = {
