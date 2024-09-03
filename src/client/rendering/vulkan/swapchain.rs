@@ -7,16 +7,18 @@ pub struct Swapchain {
     handle: vk::SwapchainKHR,
     device: khr::swapchain::Device,
     images: Vec<vk::Image>,
+    image_view: Vec<super::ImageView>,
     format: vk::Format,
     extent: vk::Extent2D,
 }
 
 impl Swapchain {
-    pub(super) fn new(handle: vk::SwapchainKHR, device: khr::swapchain::Device, images: Vec<vk::Image>, format: vk::Format, extent: vk::Extent2D) -> Self {
+    pub(super) fn new(handle: vk::SwapchainKHR, device: khr::swapchain::Device, images: Vec<vk::Image>, image_view: Vec<super::ImageView>, format: vk::Format, extent: vk::Extent2D) -> Self {
         Self {
             handle,
             device,
             images,
+            image_view,
             format,
             extent,
         }

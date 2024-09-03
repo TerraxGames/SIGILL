@@ -43,6 +43,7 @@ impl<T, D> Drop for VulkanObject<T, D> {
 // Some types for Object
 pub type DebugUtilsMessenger = VulkanObject<vk::DebugUtilsMessengerEXT, ext::debug_utils::Instance>;
 pub type Surface = VulkanObject<vk::SurfaceKHR, khr::surface::Instance>;
+pub type ImageView = VulkanObject<vk::ImageView, ash::Device>;
 
 /// A type of Vulkan object that is automatically dropped in order of dependency.
 /// # Safety
@@ -161,9 +162,9 @@ impl Instance {
         Ok(self.debug_utils_messenger())
     }
 
-    /// This method creates a singleton swapchain.
+    /// This method creates a singleton swapchain with user-defined image views.
     #[inline]
-    pub fn create_swapchain(&mut self, create_info: &vk::SwapchainCreateInfoKHR) -> VkResult<&Swapchain> {
+    pub fn create_swapchain<'a>(&mut self, create_info: &vk::SwapchainCreateInfoKHR, image_view_provider: impl FnOnce(&Vec<vk::Image>, vk::Format) -> Vec<vk::ImageViewCreateInfo<'a>>) -> VkResult<&Swapchain> {
         let swapchain_device = khr::swapchain::Device::new(&self.inner, &self.device().inner);
         // SAFETY: The object is automatically dropped.
         self.set_object(
@@ -171,10 +172,15 @@ impl Instance {
             unsafe {
                 let handle = swapchain_device.create_swapchain(create_info, None)?;
                 let images = swapchain_device.get_swapchain_images(handle)?;
+                let image_view = image_view_provider(&images, create_info.image_format)
+                    .into_iter()
+                    .map(|create_info| self.device().create_image_view(&create_info))
+                    .collect::<Result<Vec<_>, _>>()?;
                 Swapchain::new(
                     handle,
                     swapchain_device,
                     images,
+                    image_view,
                     create_info.image_format,
                     create_info.image_extent,
                 )
@@ -312,6 +318,20 @@ impl Device {
     pub fn get_device_queue(&self, queue_family_index: QueueFamilyIndex, queue_index: QueueIndex) -> vk::Queue {
         // SAFETY: The object needs no additional allocation function.
         unsafe { self.inner.get_device_queue(queue_family_index, queue_index) }
+    }
+
+    #[inline]
+    pub fn create_image_view(&self, create_info: &vk::ImageViewCreateInfo) -> VkResult<ImageView> {
+        // SAFETY: The object is automatically destroyed.
+        unsafe {
+            Ok(
+                VulkanObject::new(
+                    self.inner.create_image_view(create_info, None)?,
+                    self.inner.clone(),
+                    |image_view, device| device.destroy_image_view(*image_view, None),
+                )
+            )
+        }
     }
 }
 

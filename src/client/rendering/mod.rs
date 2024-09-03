@@ -137,7 +137,36 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> Result<(), RenderErr
     instance.create_device(selected_physical_device, &device_create_info)?;
 
     // Create swapchain.
-    instance.create_swapchain(&swapchain_create_info)?;
+    instance.create_swapchain(
+        &swapchain_create_info,
+        |images, format| {
+            Vec::from_iter(
+                images
+                    .iter()
+                    .map(|image| {
+                        vk::ImageViewCreateInfo::default()
+                            .image(*image)
+                            .format(format)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .components(
+                                vk::ComponentMapping::default()
+                                    .r(vk::ComponentSwizzle::IDENTITY)
+                                    .g(vk::ComponentSwizzle::IDENTITY)
+                                    .b(vk::ComponentSwizzle::IDENTITY)
+                                    .a(vk::ComponentSwizzle::IDENTITY)
+                            )
+                            .subresource_range(
+                                vk::ImageSubresourceRange::default()
+                                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                    .base_mip_level(0)
+                                    .level_count(1)
+                                    .base_array_layer(0)
+                                    .layer_count(1)
+                            )
+                    })
+            )
+        },
+    )?;
 
     // Populate Queue handles.
     queue_families.populate_handles(instance.device());
