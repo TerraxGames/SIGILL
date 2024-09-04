@@ -12,8 +12,10 @@ use winit::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use super::RenderResult;
 
 pub use swapchain::*;
+pub use pipeline::*;
 
 pub mod swapchain;
+pub mod pipeline;
 
 pub type QueueFamilyIndex = u32;
 pub type QueueIndex = u32;

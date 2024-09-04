@@ -19,3 +19,10 @@ sigill-derive = { path = "sigill-derive" }
 ash = "0.38"
 ash-window = "0.13.0"
 winit = "0.30"
+
+[build-dependencies]
+# Rendering
+shaderc = "0.8.3"
+
+# Housekeeping
+anyhow = "1"
