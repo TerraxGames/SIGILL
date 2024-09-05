@@ -1,33 +1,68 @@
 use std::{fs::{self, DirEntry}, path::Path};
 
+#[allow(unused)]
+macro_rules! p {
+    ($($tokens: tt)*) => {
+        println!("cargo:warning={}", format!($($tokens)*))
+    }
+}
+
 pub fn main() -> anyhow::Result<()> {
     let compiler = shaderc::Compiler::new().unwrap();
-    let options = shaderc::CompileOptions::new().unwrap();
+    let mut options = shaderc::CompileOptions::new().unwrap();
+    options.set_include_callback(|requested, include_type, source, include_depth| {
+        if include_depth > 127 {
+            return shaderc::IncludeCallbackResult::Err(format!("Maximum include depth reached in {source} including {requested}! Check for recursive include directives."))
+        }
+        if include_type == shaderc::IncludeType::Standard {
+            return shaderc::IncludeCallbackResult::Err(format!("Cannot find requested {requested} from {source}!"))
+        }
+        let source = fs::read_to_string(format!("{source}/../{requested}")).expect(format!("Failed to find {requested} from {source}").as_str()).to_string();
+        Ok(
+            shaderc::ResolvedInclude {
+                resolved_name: requested.to_string(),
+                content: source,
+            }
+        )
+    });
     let shader_files = recurse_dir("./assets/shader")?;
 
     for file in shader_files {
         let path = file.path();
+        if let Some(file_name) = path.file_name() {
+            if file_name.to_string_lossy().to_string().ends_with(".spv") {
+                continue;
+            }
+        }
         let source = fs::read_to_string(path.clone())?;
         let file_name = path.to_string_lossy().to_string();
-        let extension = file_name.split(".").last().expect("shader files must have an extension");
+        let extension = file_name.split(".").last();
+        if extension.is_none() {
+            continue;
+        }
+        let shader_kind = extension_to_shader_kind(extension.unwrap());
+        if shader_kind.is_none() {
+            continue;
+        }
         let shader_binary = compiler.compile_into_spirv(
             &source,
-            extension_to_shader_kind(extension),
+            shader_kind.unwrap(),
             &file_name,
             "main",
             Some(&options),
         )?;
-        fs::write(Path::new(format!("{}_{extension}.spv", path.with_extension("").to_string_lossy().to_string()).as_str()), shader_binary.as_binary_u8())?;
+        let target_path = &format!("{}_{}.spv", path.with_extension("").to_string_lossy().to_string(), extension.unwrap());
+        fs::write(Path::new(target_path.as_str()), shader_binary.as_binary_u8())?;
     }
 
     Ok(())
 }
 
-fn extension_to_shader_kind(extension: &str) -> shaderc::ShaderKind {
+fn extension_to_shader_kind(extension: &str) -> Option<shaderc::ShaderKind> {
     match extension {
-        "frag" => shaderc::ShaderKind::Fragment,
-        "vert" => shaderc::ShaderKind::Vertex,
-        _ => panic!("unsupported shader kind"),
+        "frag" => Some(shaderc::ShaderKind::Fragment),
+        "vert" => Some(shaderc::ShaderKind::Vertex),
+        _ => None,
     }
 }
 
