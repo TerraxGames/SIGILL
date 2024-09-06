@@ -31,7 +31,7 @@ impl Ord for RankedDevice {
 }
 
 /// Select the most suitable device for rendering.
-pub fn find_suitable_device<'a>(instance: &mut vulkan::Instance, app: &App) -> RenderResult<(vk::PhysicalDevice, vulkan::SwapchainSupport)> {
+pub fn find_suitable_device<'a>(instance: &mut vulkan::Instance, app: &App) -> RenderResult<(vk::PhysicalDevice, vulkan::swapchain::SwapchainSupport)> {
     let physical_devices = instance.enumerate_physical_devices()?;
     for physical_device in physical_devices.iter() {
         let supported = check_device_capabilities(instance, *physical_device, app).expect("failed to check device capabilities");
@@ -50,7 +50,7 @@ pub fn find_suitable_device<'a>(instance: &mut vulkan::Instance, app: &App) -> R
     if let Some(suitable_device) = suitable_device {
         let suitable_device = suitable_device.1;
         instance.create_surface(app.window().display_handle()?.as_raw(), app.window().window_handle()?.as_raw())?;
-        let swapchain_support = vulkan::SwapchainSupport::query(&instance, suitable_device)?;
+        let swapchain_support = vulkan::swapchain::SwapchainSupport::query(&instance, suitable_device)?;
 
         return Ok((suitable_device, swapchain_support))
     } else {
@@ -93,7 +93,7 @@ pub fn check_device_capabilities(instance: &mut vulkan::Instance, physical_devic
 
     // Verify surface capabilities.
     instance.create_surface(app.window().display_handle()?.as_raw(), app.window().window_handle()?.as_raw())?;
-    let swap_chain_support = vulkan::SwapchainSupport::query(&instance, physical_device)?;
+    let swap_chain_support = vulkan::swapchain::SwapchainSupport::query(&instance, physical_device)?;
     let swap_chain_adequate = !swap_chain_support.formats().is_empty() && !swap_chain_support.present_modes().is_empty();
     
     Ok(supported_gpu && supports_vulkan_version && supports_required_features && has_required_queue_families && supports_required_extensions && swap_chain_adequate)

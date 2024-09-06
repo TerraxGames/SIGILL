@@ -30,11 +30,13 @@ pub enum RenderError {
     ValidationLayerNotFound(String),
     #[error("no supported graphics devices were found")]
     UnsupportedDevice,
+    #[error("I/O Error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 pub type RenderResult<T> = Result<T, RenderError>;
 
-pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> Result<(), RenderError> {
+pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> RenderResult<()> {
     warn!("Now loading Vulkan library. If the game crashes after this warning, check to see if your system supports Vulkan!");
     // SAFETY: ¯\_(ツ)_/¯
     // Beware of garbage error messages on UNIX-likes, since `dlerror` is not MT-safe.
@@ -171,6 +173,11 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> Result<(), RenderErr
     // Populate Queue handles.
     queue_families.populate_handles(instance.device());
 
+    instance.create_framebuffer(
+        vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+        queue_families.graphics().queue_info().0,
+    )?;
+
     app.client_data_mut().render_data = Some(RenderData {
         queue_families,
         selected_physical_device,
@@ -180,8 +187,37 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> Result<(), RenderErr
     Ok(())
 }
 
-pub fn render(app: &mut App) -> Result<(), RenderError> {
+pub fn render(app: &mut App) -> RenderResult<()> {
     app.window().request_redraw();
+
+    let render_data = app.render_data_mut();
+    let instance = &render_data.instance;
+    let current_frame = instance.framebuffer().current_frame();
+    // Wait until the GPU has finished rendering the last frame.
+    current_frame.wait_for_render()?;
+
+    // Request image from the swapchain.
+    let swapchain = instance.swapchain();
+    let swapchain_image = swapchain.acquire_next_image(current_frame)?.unwrap();
+
+    // Prepare command buffer.
+    let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
+        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    current_frame.reset_command_buffer()?;
+    current_frame.begin_command_buffer(command_buffer_begin_info)?;
+    current_frame.transition_image(swapchain_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL)?;
+
+    // Draw flashing color.
+    let flash = f32::abs(f32::sin(std::f32::consts::TAU * instance.framebuffer().current_frame_count() as f32 / 120.0));
+    let clear_color = vk::ClearColorValue {
+        float32: [0.2 * flash, 0.25 * flash, flash, 1.0],
+    };
+    let clear_range = vulkan::util::image_subresource_range(vk::ImageAspectFlags::COLOR);
+    current_frame.clear_color_image(swapchain_image, vk::ImageLayout::GENERAL, clear_color, &[clear_range]);
+
+    // Transition swapchain image back and end command buffer.
+    current_frame.transition_image(swapchain_image, vk::ImageLayout::GENERAL, vk::ImageLayout::PRESENT_SRC_KHR)?;
+    current_frame.end_command_buffer()?;
 
     Ok(())
 }

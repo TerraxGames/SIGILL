@@ -1,4 +1,4 @@
-use std::{ffi::{c_char, CString}, sync::LazyLock};
+use std::{ffi::{c_char, CString}, sync::LazyLock, time::Duration};
 
 use ash::vk::{self, PhysicalDeviceFeatures, QueueFlags};
 
@@ -36,6 +36,8 @@ pub const QUEUE_FAMILIES: LazyLock<&'static [vk::QueueFlags]> = LazyLock::new(||
         vk::QueueFlags::GRAPHICS,
     ]
 );
+pub const FRAMEBUFFER_SIZE: usize = 2;
+pub const FENCE_TIMEOUT: u64 = Duration::from_secs(1).as_nanos() as u64;
 
 // Logging
 pub const LOG_LEVEL: log::LevelFilter = {

@@ -3,6 +3,8 @@
 
 use ash::{khr, prelude::VkResult, vk};
 
+use crate::constants;
+
 pub struct Swapchain {
     handle: vk::SwapchainKHR,
     device: khr::swapchain::Device,
@@ -22,6 +24,13 @@ impl Swapchain {
             format,
             extent,
         }
+    }
+
+    pub fn acquire_next_image(&self, frame: &super::commands::Frame) -> VkResult<Option<vk::Image>> {
+        // SAFETY: The device is available at this point.
+        Ok(
+            unsafe { self.images.get(self.device.acquire_next_image(self.handle, constants::FENCE_TIMEOUT, frame.swapchain_semaphore(), vk::Fence::null())?.0 as usize).copied() }
+        )
     }
 }
 

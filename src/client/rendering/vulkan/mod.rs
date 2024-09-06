@@ -3,7 +3,7 @@
 //!
 //! See [`VulkanObject`] and [`Instance`].
 
-use std::{any::Any, collections::HashMap, mem::ManuallyDrop, ptr::drop_in_place, u32};
+use std::{any::Any, collections::HashMap, mem::ManuallyDrop, path::PathBuf, ptr::drop_in_place};
 
 use ash::{ext, khr, prelude::VkResult, vk};
 use sigill_derive::{Deref, DerefMut};
@@ -11,11 +11,11 @@ use winit::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use super::RenderResult;
 
-pub use swapchain::*;
-pub use pipeline::*;
-
 pub mod swapchain;
 pub mod pipeline;
+pub mod shader;
+pub mod commands;
+pub mod util;
 
 pub type QueueFamilyIndex = u32;
 pub type QueueIndex = u32;
@@ -53,6 +53,10 @@ pub type ImageView = VulkanObject<vk::ImageView, ash::Device>;
 #[repr(u32)]
 #[derive(Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VulkanObjectType {
+    TriangleShader,
+
+    Framebuffer,
+
     Swapchain,
 
     Surface,
@@ -92,7 +96,12 @@ impl Instance {
     }
 
     #[inline]
-    pub fn swapchain(&self) -> &Swapchain {
+    pub fn framebuffer(&self) -> &commands::Framebuffer {
+        self.get_object(VulkanObjectType::Framebuffer).expect("framebuffer must be initialized before being accessed")
+    }
+
+    #[inline]
+    pub fn swapchain(&self) -> &swapchain::Swapchain {
         self.get_object(VulkanObjectType::Swapchain).expect("swapchain must be initialized before being accessed")
     }
 
@@ -166,7 +175,7 @@ impl Instance {
 
     /// This method creates a singleton swapchain with user-defined image views.
     #[inline]
-    pub fn create_swapchain<'a>(&mut self, create_info: &vk::SwapchainCreateInfoKHR, image_view_provider: impl FnOnce(&Vec<vk::Image>, vk::Format) -> Vec<vk::ImageViewCreateInfo<'a>>) -> VkResult<&Swapchain> {
+    pub fn create_swapchain<'a>(&mut self, create_info: &vk::SwapchainCreateInfoKHR, image_view_provider: impl FnOnce(&Vec<vk::Image>, vk::Format) -> Vec<vk::ImageViewCreateInfo<'a>>) -> VkResult<&swapchain::Swapchain> {
         let swapchain_device = khr::swapchain::Device::new(&self.inner, &self.device().inner);
         // SAFETY: The object is automatically dropped.
         self.set_object(
@@ -178,7 +187,7 @@ impl Instance {
                     .into_iter()
                     .map(|create_info| self.device().create_image_view(&create_info))
                     .collect::<Result<Vec<_>, _>>()?;
-                Swapchain::new(
+                swapchain::Swapchain::new(
                     handle,
                     swapchain_device,
                     images,
@@ -221,6 +230,24 @@ impl Instance {
             },
         );
         Ok(self.device())
+    }
+
+    #[inline]
+    fn create_shader(&mut self, object_type: VulkanObjectType, create_info: &vk::ShaderModuleCreateInfo, path: PathBuf) -> VkResult<&shader::ShaderModule> {
+        self.set_object(
+            object_type,
+            shader::ShaderModule::new(self.device().inner.clone(), create_info, path),
+        );
+        Ok(self.get_object(object_type).unwrap())
+    }
+
+    #[inline]
+    pub fn create_framebuffer(&mut self, command_pool_flags: vk::CommandPoolCreateFlags, queue_family_index: QueueFamilyIndex) -> VkResult<&commands::Framebuffer> {
+        self.set_object(
+            VulkanObjectType::Framebuffer,
+            commands::Framebuffer::new(self.device(), command_pool_flags, queue_family_index),
+       );
+       Ok(self.framebuffer())
     }
 
     // Inner Instance Methods
@@ -281,6 +308,10 @@ impl Instance {
 
 impl Drop for Instance {
     fn drop(&mut self) {
+        // Wait for the GPU to stop rendering.
+        // SAFETY: The device handle exists at this point.
+        let _ = unsafe { self.device().inner.device_wait_idle() };
+
         // Sort objects to drop by their discriminant (i.e. their drop order).
         let mut sorted_objects = Vec::new();
         sorted_objects.extend(self.objects.iter_mut());
@@ -316,11 +347,15 @@ pub struct Device {
 }
 
 impl Device {
+    // Misc.
+
     #[inline]
     pub fn get_device_queue(&self, queue_family_index: QueueFamilyIndex, queue_index: QueueIndex) -> vk::Queue {
         // SAFETY: The object needs no additional allocation function.
         unsafe { self.inner.get_device_queue(queue_family_index, queue_index) }
     }
+
+    // Object Creation
 
     #[inline]
     pub fn create_image_view(&self, create_info: &vk::ImageViewCreateInfo) -> VkResult<ImageView> {
