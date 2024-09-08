@@ -1,6 +1,6 @@
 use std::{ffi::{c_char, CString}, sync::LazyLock, time::Duration};
 
-use ash::vk::{self, PhysicalDeviceFeatures, QueueFlags};
+use ash::vk;
 
 // Info
 pub const NAME: &'static str = "SIGILL";
@@ -19,9 +19,9 @@ pub const REQUIRED_VALIDATION_LAYERS: &'static [*const c_char] = &[
     c"VK_LAYER_KHRONOS_validation".as_ptr()
 ];
 pub const ENABLE_VALIDATION_LAYERS: bool = cfg!(debug_assertions);
-pub const REQUIRED_QUEUE_FAMILIES: LazyLock<QueueFlags> = LazyLock::new(|| vk::QueueFlags::GRAPHICS);
-pub const ENABLED_DEVICE_FEATURES: LazyLock<PhysicalDeviceFeatures> = LazyLock::new(||
-    PhysicalDeviceFeatures::default()
+pub const REQUIRED_QUEUE_FAMILIES: LazyLock<vk::QueueFlags> = LazyLock::new(|| vk::QueueFlags::GRAPHICS);
+pub const ENABLED_DEVICE_FEATURES: LazyLock<vk::PhysicalDeviceFeatures> = LazyLock::new(||
+    vk::PhysicalDeviceFeatures::default()
         .geometry_shader(true)
 );
 pub const ENABLED_EXTENSIONS: &'static [*const c_char] = &[
@@ -38,6 +38,8 @@ pub const QUEUE_FAMILIES: LazyLock<&'static [vk::QueueFlags]> = LazyLock::new(||
 );
 pub const FRAMEBUFFER_SIZE: usize = 2;
 pub const FENCE_TIMEOUT: u64 = Duration::from_secs(1).as_nanos() as u64;
+pub const MIP_LEVELS: u32 = 1;
+pub const SAMPLES: vk::SampleCountFlags = vk::SampleCountFlags::TYPE_1;
 
 // Logging
 pub const LOG_LEVEL: log::LevelFilter = {

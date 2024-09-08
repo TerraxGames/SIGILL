@@ -3,10 +3,11 @@
 //!
 //! See [`VulkanObject`] and [`Instance`].
 
-use std::{any::Any, collections::HashMap, mem::ManuallyDrop, path::PathBuf, ptr::drop_in_place};
+use std::{any::Any, borrow::BorrowMut, collections::HashMap, mem::ManuallyDrop, ops::Deref, path::PathBuf, ptr::drop_in_place, rc::Rc};
 
 use ash::{ext, khr, prelude::VkResult, vk};
 use sigill_derive::{Deref, DerefMut};
+use vk_mem::Alloc;
 use winit::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use super::RenderResult;
@@ -16,6 +17,8 @@ pub mod pipeline;
 pub mod shader;
 pub mod commands;
 pub mod util;
+pub mod queues;
+pub mod image;
 
 pub type QueueFamilyIndex = u32;
 pub type QueueIndex = u32;
@@ -28,17 +31,23 @@ pub type QueueIndex = u32;
 /// 
 /// See [`VulkanObjectType`].
 #[derive(Deref, DerefMut)]
-pub struct VulkanObject<T, D>(T, D, fn(&T, &D));
+pub struct VulkanObject<T, D>(T, D, fn(&T, &mut D));
 
 impl<T, D> VulkanObject<T, D> {
-    pub fn new(object: T, data: D, destructor: fn(&T, &D)) -> Self {
+    pub fn new(object: T, data: D, destructor: fn(&T, &mut D)) -> Self {
         Self(object, data, destructor)
+    }
+}
+
+impl<T, D> VulkanObject<T, Option<D>> {
+    fn undropped(object: T) -> Self {
+        Self(object, None, |_, _| {})
     }
 }
 
 impl<T, D> Drop for VulkanObject<T, D> {
     fn drop(&mut self) {
-        (self.2)(&self.0, &self.1);
+        (self.2)(&self.0, &mut self.1);
     }
 }
 
@@ -46,6 +55,7 @@ impl<T, D> Drop for VulkanObject<T, D> {
 pub type DebugUtilsMessenger = VulkanObject<vk::DebugUtilsMessengerEXT, ext::debug_utils::Instance>;
 pub type Surface = VulkanObject<vk::SurfaceKHR, khr::surface::Instance>;
 pub type ImageView = VulkanObject<vk::ImageView, ash::Device>;
+pub type Image = VulkanObject<vk::Image, Option<(Rc<vk_mem::Allocator>, vk_mem::Allocation)>>;
 
 /// A type of Vulkan object that is automatically dropped in order of dependency.
 /// # Safety
@@ -54,6 +64,8 @@ pub type ImageView = VulkanObject<vk::ImageView, ash::Device>;
 #[derive(Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VulkanObjectType {
     TriangleShader,
+
+    DrawImage,
 
     Framebuffer,
 
@@ -96,8 +108,18 @@ impl Instance {
     }
 
     #[inline]
+    pub fn draw_image(&self) -> &image::AllocatedImage {
+        self.get_object(VulkanObjectType::DrawImage).expect("draw_image must be initialized before being accessed")
+    }
+
+    #[inline]
     pub fn framebuffer(&self) -> &commands::Framebuffer {
         self.get_object(VulkanObjectType::Framebuffer).expect("framebuffer must be initialized before being accessed")
+    }
+
+    #[inline]
+    pub fn framebuffer_mut(&mut self) -> &mut commands::Framebuffer {
+        self.get_object_mut(VulkanObjectType::Framebuffer).expect("framebuffer must be initialized before being accessed")
     }
 
     #[inline]
@@ -115,9 +137,15 @@ impl Instance {
         self.get_object(VulkanObjectType::Device).expect("device must be initialized before being accessed")
     }
 
+    // TODO: Implement deque-based Vulkan object destruction system.
     #[inline]
     pub fn get_object<T: Any>(&self, object_type: VulkanObjectType) -> Option<&T> {
         self.objects.get(&object_type)?.downcast_ref()
+    }
+
+    #[inline]
+    pub fn get_object_mut<T: Any>(&mut self, object_type: VulkanObjectType) -> Option<&mut T> {
+        self.objects.get_mut(&object_type)?.downcast_mut()
     }
 
     pub fn set_object<T: Any>(&mut self, object_type: VulkanObjectType, object: T) {
@@ -175,14 +203,17 @@ impl Instance {
 
     /// This method creates a singleton swapchain with user-defined image views.
     #[inline]
-    pub fn create_swapchain<'a>(&mut self, create_info: &vk::SwapchainCreateInfoKHR, image_view_provider: impl FnOnce(&Vec<vk::Image>, vk::Format) -> Vec<vk::ImageViewCreateInfo<'a>>) -> VkResult<&swapchain::Swapchain> {
+    pub fn create_swapchain<'a>(&mut self, create_info: &vk::SwapchainCreateInfoKHR, image_view_provider: impl FnOnce(&Vec<Image>, vk::Format) -> Vec<vk::ImageViewCreateInfo<'a>>) -> VkResult<&swapchain::Swapchain> {
         let swapchain_device = khr::swapchain::Device::new(&self.inner, &self.device().inner);
         // SAFETY: The object is automatically dropped.
         self.set_object(
             VulkanObjectType::Swapchain,
             unsafe {
                 let handle = swapchain_device.create_swapchain(create_info, None)?;
-                let images = swapchain_device.get_swapchain_images(handle)?;
+                let images = swapchain_device.get_swapchain_images(handle)?
+                    .into_iter()
+                    .map(|image| VulkanObject::undropped(image))
+                    .collect::<Vec<_>>();
                 let image_view = image_view_provider(&images, create_info.image_format)
                     .into_iter()
                     .map(|create_info| self.device().create_image_view(&create_info))
@@ -221,19 +252,26 @@ impl Instance {
     #[inline]
     pub fn create_device(&mut self, physical_device: vk::PhysicalDevice, create_info: &vk::DeviceCreateInfo) -> VkResult<&Device> {
         // SAFETY: The object is automatically dropped.
+        let device = unsafe { self.inner.create_device(physical_device, create_info, None)? };
+        let allocator_create_info = vk_mem::AllocatorCreateInfo::new(
+            &self.inner,
+            &device,
+            physical_device,
+        );
+        // SAFETY: The object is automatically dropped.
+        let allocator = unsafe { vk_mem::Allocator::new(allocator_create_info)? };
         self.set_object(
             VulkanObjectType::Device,
-            unsafe {
-                Device {
-                    inner: self.inner.create_device(physical_device, create_info, None)?,
-                }
+            Device {
+                inner: device,
+                allocator: Rc::new(allocator),
             },
         );
         Ok(self.device())
     }
 
     #[inline]
-    fn create_shader(&mut self, object_type: VulkanObjectType, create_info: &vk::ShaderModuleCreateInfo, path: PathBuf) -> VkResult<&shader::ShaderModule> {
+    fn create_shader_module(&mut self, object_type: VulkanObjectType, create_info: &vk::ShaderModuleCreateInfo, path: PathBuf) -> VkResult<&shader::ShaderModule> {
         self.set_object(
             object_type,
             shader::ShaderModule::new(self.device().inner.clone(), create_info, path),
@@ -245,9 +283,18 @@ impl Instance {
     pub fn create_framebuffer(&mut self, command_pool_flags: vk::CommandPoolCreateFlags, queue_family_index: QueueFamilyIndex) -> VkResult<&commands::Framebuffer> {
         self.set_object(
             VulkanObjectType::Framebuffer,
-            commands::Framebuffer::new(self.device(), command_pool_flags, queue_family_index),
+            commands::Framebuffer::new(self.device(), command_pool_flags, queue_family_index)?,
        );
        Ok(self.framebuffer())
+    }
+
+    #[inline]
+    pub fn create_draw_image(&mut self, image_create_info: &vk::ImageCreateInfo, image_view_create_info: &vk::ImageViewCreateInfo, extent: vk::Extent3D, format: vk::Format) -> VkResult<&image::AllocatedImage> {
+        self.set_object(
+            VulkanObjectType::DrawImage,
+            image::AllocatedImage::new(self.device(), image_create_info, image_view_create_info, extent, format)?,
+        );
+        Ok(self.draw_image())
     }
 
     // Inner Instance Methods
@@ -341,9 +388,11 @@ impl Extensions {
     }
 }
 
-#[repr(transparent)]
 pub struct Device {
     inner: ash::Device,
+    // use a ref-counter because the memory dependency is a little fucked.
+    // basically, each VulkanObject allocated via an Allocator requires a reference to its Allocator for destruction.
+    allocator: Rc<vk_mem::Allocator>,
 }
 
 impl Device {
@@ -355,7 +404,41 @@ impl Device {
         unsafe { self.inner.get_device_queue(queue_family_index, queue_index) }
     }
 
+    #[inline]
+    pub fn submit_queue<'a>(&self, queue: vk::Queue, submit: &'a vk::SubmitInfo2<'a>, fence: vk::Fence) -> VkResult<()> {
+        self.submit_queue_ex(queue, std::slice::from_ref(submit), fence)
+    }
+
+    #[inline]
+    pub fn submit_queue_ex<'a>(&self, queue: vk::Queue, submits: &'a [vk::SubmitInfo2<'a>], fence: vk::Fence) -> VkResult<()> {
+        // SAFETY: The object needs no additional allocation function.
+        unsafe { self.inner.queue_submit2(queue, submits, fence) }
+    }
+
     // Object Creation
+
+    #[inline]
+    pub fn create_image(&self, create_info: &vk::ImageCreateInfo) -> VkResult<Image> {
+        // SAFETY: The object is automatically destroyed.
+        unsafe {
+            let allocation_create_info = vk_mem::AllocationCreateInfo {
+                usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                ..Default::default()
+            };
+            let image = self.allocator.create_image(create_info, &allocation_create_info)?;
+            Ok(
+                VulkanObject::new(
+                    image.0,
+                    Some((self.allocator.clone(), image.1)),
+                    |image, data| {
+                        let (allocator, allocation) = data.as_mut().unwrap();
+                        allocator.destroy_image(*image, allocation);
+                    },
+                )
+            )
+        }
+    }
 
     #[inline]
     pub fn create_image_view(&self, create_info: &vk::ImageViewCreateInfo) -> VkResult<ImageView> {
@@ -374,6 +457,8 @@ impl Device {
 
 impl Drop for Device {
     fn drop(&mut self) {
+        // SAFETY: The object exists for the lifetime of this struct.
+        unsafe { drop_in_place(self.allocator.borrow_mut() as *mut _); }
         // SAFETY: The object exists for the lifetime of this struct.
         unsafe { self.inner.destroy_device(None); }
     }

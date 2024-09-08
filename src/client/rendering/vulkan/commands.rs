@@ -38,7 +38,7 @@ impl Frame {
         // SAFETY: The object is automatically destroyed.
         let render_semaphore = unsafe { device.create_semaphore(&semaphore_create_info, None)? };
         let fence_create_info = vk::FenceCreateInfo::default()
-            .flags(vk::FenceCreateFlags::empty());
+            .flags(vk::FenceCreateFlags::SIGNALED);
         // SAFETY: The object is automatically destroyed.
         let render_fence = unsafe { device.create_fence(&fence_create_info, None)? };
         Ok(
@@ -53,9 +53,15 @@ impl Frame {
         )
     }
 
+    #[inline]
+    pub fn command_buffer_handle(&self) -> vk::CommandBuffer {
+        self.command_buffer_handle
+    }
+
     // Command Buffer Management
 
     /// Wait for rendering to finish.
+    #[inline]
     pub fn wait_for_render(&self) -> VkResult<()> {
         // SAFETY: The device is available at this point.
         unsafe {
@@ -65,38 +71,57 @@ impl Frame {
         Ok(())
     }
 
-    pub(super) fn swapchain_semaphore(&self) -> vk::Semaphore {
+    #[inline]
+    pub fn swapchain_semaphore(&self) -> vk::Semaphore {
         self.swapchain_semaphore
     }
 
+    #[inline]
+    pub fn render_semaphore(&self) -> vk::Semaphore {
+        self.render_semaphore
+    }
+
+    #[inline]
+    pub fn render_fence(&self) -> vk::Fence {
+        self.render_fence
+    }
+
+    #[inline]
     pub fn reset_command_buffer(&self) -> VkResult<()> {
         // SAFETY: The device is available at this point.
-        unsafe { self.device.reset_command_buffer(self.command_buffer_handle, vk::CommandBufferResetFlags::empty())?; }
-        Ok(())
+        unsafe { self.device.reset_command_buffer(self.command_buffer_handle, vk::CommandBufferResetFlags::empty()) }
     }
 
+    #[inline]
     pub fn begin_command_buffer(&self, begin_info: vk::CommandBufferBeginInfo) -> VkResult<()> {
         // SAFETY: The device is available at this point.
-        unsafe { self.device.begin_command_buffer(self.command_buffer_handle, &begin_info)?; }
-        Ok(())
+        unsafe { self.device.begin_command_buffer(self.command_buffer_handle, &begin_info) }
     }
 
+    #[inline]
     pub fn end_command_buffer(&self) -> VkResult<()> {
         // SAFETY: The device is available at this point.
-        unsafe { self.device.end_command_buffer(self.command_buffer_handle)?; }
-        Ok(())
+        unsafe { self.device.end_command_buffer(self.command_buffer_handle) }
     }
 
     // Vulkan Commands
 
-    pub fn clear_color_image(&self, image: vk::Image, image_layout: vk::ImageLayout, clear_color_value: vk::ClearColorValue, ranges: &[vk::ImageSubresourceRange]) {
+    #[inline]
+    pub fn cmd_clear_color_image(&self, image: &super::Image, image_layout: vk::ImageLayout, clear_color_value: vk::ClearColorValue, ranges: &[vk::ImageSubresourceRange]) {
         // SAFETY: The device is available at this point.
-        unsafe { self.device.cmd_clear_color_image(self.command_buffer_handle, image, image_layout, &clear_color_value, ranges); }
+        unsafe { self.device.cmd_clear_color_image(self.command_buffer_handle, **image, image_layout, &clear_color_value, ranges); }
+    }
+
+    #[inline]
+    pub fn cmd_blit_image_2(&self, blit_info: &vk::BlitImageInfo2) {
+        // SAFETY: The device is available at this point.
+        unsafe { self.device.cmd_blit_image2(self.command_buffer_handle, blit_info) }
     }
 
     // Utilities
 
-    pub fn transition_image(&self, image: vk::Image, old_layout: vk::ImageLayout, new_layout: vk::ImageLayout) -> VkResult<()> {
+    #[inline]
+    pub fn transition_image(&self, image: &super::Image, old_layout: vk::ImageLayout, new_layout: vk::ImageLayout) -> VkResult<()> {
         self.transition_image_ex(
             image,
             vk::PipelineStageFlags2::ALL_COMMANDS,
@@ -108,7 +133,7 @@ impl Frame {
         )
     }
 
-    pub fn transition_image_ex(&self, image: vk::Image, src_stage_mask: vk::PipelineStageFlags2, src_access_mask: vk::AccessFlags2, dst_stage_mask: vk::PipelineStageFlags2, dst_access_mask: vk::AccessFlags2, old_layout: vk::ImageLayout, new_layout: vk::ImageLayout) -> VkResult<()> {
+    pub fn transition_image_ex(&self, image: &super::Image, src_stage_mask: vk::PipelineStageFlags2, src_access_mask: vk::AccessFlags2, dst_stage_mask: vk::PipelineStageFlags2, dst_access_mask: vk::AccessFlags2, old_layout: vk::ImageLayout, new_layout: vk::ImageLayout) -> VkResult<()> {
         let aspect_flags = if new_layout == vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL {
             vk::ImageAspectFlags::DEPTH
         } else {
@@ -123,7 +148,7 @@ impl Frame {
             .old_layout(old_layout)
             .new_layout(new_layout)
             .subresource_range(subresource_range)
-            .image(image);
+            .image(image.0);
         let image_barriers = [image_barrier];
         let dependency_info = vk::DependencyInfo::default()
             .image_memory_barriers(&image_barriers);
@@ -196,14 +221,17 @@ impl Framebuffer {
         Ok(())
     }
 
+    #[inline]
     pub fn current_frame(&self) -> &Frame {
         &self.frames[self.current_frame % constants::FRAMEBUFFER_SIZE]
     }
 
+    #[inline]
     pub fn increment_current_frame(&mut self) {
         self.current_frame += 1;
     }
 
+    #[inline]
     pub fn current_frame_count(&self) -> usize {
         self.current_frame
     }

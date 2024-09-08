@@ -9,11 +9,10 @@ use crate::*;
 pub mod vulkan;
 pub mod log;
 pub mod device;
-pub mod queues;
 
 #[allow(unused)]
 pub struct RenderData {
-    pub queue_families: queues::QueueFamilies,
+    pub queue_families: vulkan::queues::QueueFamilies,
     pub selected_physical_device: vk::PhysicalDevice,
     pub instance: vulkan::Instance,
 }
@@ -96,19 +95,20 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> RenderResult<()> {
     let queue_flags = *constants::QUEUE_FAMILIES;
     let queue_family_map = instance.get_queue_family_map(selected_physical_device, queue_flags);
     debug!("Queue Families queried: {queue_family_map:?}");
-    let mut queue_families = queues::QueueFamilies::new_empty(&queue_family_map);
+    let mut queue_families = vulkan::queues::QueueFamilies::new_empty(&queue_family_map);
     queue_families = queue_families.query_present_mode_queue(&queue_family_map, &instance, selected_physical_device, instance.surface())?;
     trace!("Using Queue Families: {queue_families:#?}");
 
     // Create swapchain info.
+    let image_extent = swapchain_support.select_extent(app.window().inner_size().width, app.window().inner_size().height);
     let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(*instance.surface().deref())
         .min_image_count(capabilities.min_image_count)
         .image_format(format.format)
         .image_color_space(format.color_space)
-        .image_extent(swapchain_support.select_extent(app.window().inner_size().width, app.window().inner_size().height))
+        .image_extent(image_extent)
         .image_array_layers(1)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT);
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST);
     let queue_family_indices = vec![queue_families.graphics().queue_info().0, queue_families.present_mode().queue_info().0];
 
     if queue_families.graphics().queue_info() != queue_families.present_mode().queue_info() {
@@ -120,22 +120,28 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> RenderResult<()> {
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE);
     }
 
+    let present_mode = swapchain_support.select_present_mode(vk::PresentModeKHR::MAILBOX);
+    trace!("Present mode: {present_mode:?}");
     swapchain_create_info = swapchain_create_info
         .pre_transform(swapchain_support.capabilities().current_transform)
         .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(swapchain_support.select_present_mode(vk::PresentModeKHR::MAILBOX));
+        .present_mode(present_mode);
 
     // Get queue creation info.
     let queue_create_infos = queue_families.get_queue_create_infos(&queue_family_map);
     trace!("Queue Creation Info: {queue_create_infos:?}");
 
+    // Enable special Synchronization2 feature.
+    let mut synchronization2_feature = vk::PhysicalDeviceSynchronization2Features::default()
+        .synchronization2(true);
     // Create device.
     let enabled_device_features = &*constants::ENABLED_DEVICE_FEATURES;
     // don't enable device-specific layers because we don't support shitty Vulkan implementations
     let device_create_info = vk::DeviceCreateInfo::default()
         .enabled_features(enabled_device_features)
         .enabled_extension_names(constants::ENABLED_DEVICE_EXTENSIONS)
-        .queue_create_infos(queue_create_infos.as_slice());
+        .queue_create_infos(queue_create_infos.as_slice())
+        .push_next(&mut synchronization2_feature);
     instance.create_device(selected_physical_device, &device_create_info)?;
 
     // Create swapchain.
@@ -147,7 +153,7 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> RenderResult<()> {
                     .iter()
                     .map(|image| {
                         vk::ImageViewCreateInfo::default()
-                            .image(*image)
+                            .image(**image)
                             .format(format)
                             .view_type(vk::ImageViewType::TYPE_2D)
                             .components(
@@ -178,6 +184,17 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> RenderResult<()> {
         queue_families.graphics().queue_info().0,
     )?;
 
+    let draw_image_format = vk::Format::R16G16B16A16_SFLOAT;
+    let draw_image_extent = image_extent;
+    let mut draw_image_usages = vk::ImageUsageFlags::empty();
+    draw_image_usages |= vk::ImageUsageFlags::TRANSFER_SRC;
+    draw_image_usages |= vk::ImageUsageFlags::TRANSFER_DST;
+    draw_image_usages |= vk::ImageUsageFlags::STORAGE;
+    draw_image_usages |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
+    let draw_image_info = vulkan::util::image_info_2d(draw_image_format, draw_image_extent, draw_image_usages);
+    let draw_image_view_info = vulkan::util::image_view_create_info_2d(draw_image_format, None, vk::ImageAspectFlags::COLOR);
+    instance.create_draw_image(&draw_image_info, &draw_image_view_info, draw_image_extent.into(), draw_image_format)?;
+
     app.client_data_mut().render_data = Some(RenderData {
         queue_families,
         selected_physical_device,
@@ -191,14 +208,15 @@ pub fn render(app: &mut App) -> RenderResult<()> {
     app.window().request_redraw();
 
     let render_data = app.render_data_mut();
-    let instance = &render_data.instance;
+    let instance = &mut render_data.instance;
     let current_frame = instance.framebuffer().current_frame();
     // Wait until the GPU has finished rendering the last frame.
     current_frame.wait_for_render()?;
 
     // Request image from the swapchain.
     let swapchain = instance.swapchain();
-    let swapchain_image = swapchain.acquire_next_image(current_frame)?.unwrap();
+    let swapchain_image_index = swapchain.acquire_next_image(current_frame)?;
+    let swapchain_image = swapchain.get_image(swapchain_image_index).expect("image should have been present in swapchain");
 
     // Prepare command buffer.
     let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
@@ -208,16 +226,35 @@ pub fn render(app: &mut App) -> RenderResult<()> {
     current_frame.transition_image(swapchain_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL)?;
 
     // Draw flashing color.
-    let flash = f32::abs(f32::sin(std::f32::consts::TAU * instance.framebuffer().current_frame_count() as f32 / 120.0));
+    let flash = f32::abs(f32::sin(std::f32::consts::PI * instance.framebuffer().current_frame_count() as f32 / 360.0));
     let clear_color = vk::ClearColorValue {
         float32: [0.2 * flash, 0.25 * flash, flash, 1.0],
     };
     let clear_range = vulkan::util::image_subresource_range(vk::ImageAspectFlags::COLOR);
-    current_frame.clear_color_image(swapchain_image, vk::ImageLayout::GENERAL, clear_color, &[clear_range]);
+    current_frame.cmd_clear_color_image(swapchain_image, vk::ImageLayout::GENERAL, clear_color, &[clear_range]);
 
     // Transition swapchain image back and end command buffer.
     current_frame.transition_image(swapchain_image, vk::ImageLayout::GENERAL, vk::ImageLayout::PRESENT_SRC_KHR)?;
     current_frame.end_command_buffer()?;
+
+    // Prepare queue submission.
+    let command_buffer_submit_info = vulkan::util::command_buffer_submit_info(current_frame.command_buffer_handle());
+    let wait_semaphore_submit_info = Some(vulkan::util::semaphore_submit_info(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT, current_frame.swapchain_semaphore()));
+    let signal_semaphore_submit_info = Some(vulkan::util::semaphore_submit_info(vk::PipelineStageFlags2::ALL_GRAPHICS, current_frame.render_semaphore()));
+    let submit_info = vulkan::util::submit_info(&command_buffer_submit_info, &signal_semaphore_submit_info, &wait_semaphore_submit_info);
+    
+    render_data.queue_families.submit_queue(instance.device(), vulkan::queues::QueueType::Graphics, &submit_info, current_frame.render_fence())?;
+
+    let swapchain_handle = swapchain.handle();
+    let render_semaphore = current_frame.render_semaphore();
+    let present_info = vk::PresentInfoKHR::default()
+        .swapchains(std::slice::from_ref(&swapchain_handle))
+        .wait_semaphores(std::slice::from_ref(&render_semaphore))
+        .image_indices(std::slice::from_ref(&swapchain_image_index));
+
+    swapchain.present_queue(render_data.queue_families.graphics(), &present_info)?;
+
+    instance.framebuffer_mut().increment_current_frame();
 
     Ok(())
 }

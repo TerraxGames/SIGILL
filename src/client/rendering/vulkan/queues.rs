@@ -5,19 +5,17 @@ use std::collections::HashMap;
 
 use ash::{prelude::VkResult, vk};
 
-use super::vulkan;
-
 const GRAPHICS: &'static str = "graphics queue should be available";
 
 #[derive(Debug)]
 pub struct Queue {
-    queue_info: (vulkan::QueueFamilyIndex, vulkan::QueueIndex),
+    queue_info: (super::QueueFamilyIndex, super::QueueIndex),
     handle: Option<vk::Queue>,
     priority: f32,
 }
 
 impl Queue {
-    pub fn new_empty(queue_info: (vulkan::QueueFamilyIndex, vulkan::QueueIndex), priority: f32) -> Self {
+    pub fn new_empty(queue_info: (super::QueueFamilyIndex, super::QueueIndex), priority: f32) -> Self {
         Self {
             queue_info,
             handle: None,
@@ -25,13 +23,18 @@ impl Queue {
         }
     }
 
-    pub fn populate_handle(&mut self, device: &vulkan::Device) {
+    pub fn populate_handle(&mut self, device: &super::Device) {
         self.handle = Some(device.get_device_queue(self.queue_info.0, self.queue_info.1));
     }
 
     #[inline]
-    pub fn queue_info(&self) -> &(vulkan::QueueFamilyIndex, vulkan::QueueIndex) {
+    pub fn queue_info(&self) -> &(super::QueueFamilyIndex, super::QueueIndex) {
         &self.queue_info
+    }
+
+    #[inline]
+    pub(super) fn handle(&self) -> vk::Queue {
+        self.handle.expect("handle must be populated before being accessed")
     }
 }
 
@@ -44,11 +47,11 @@ pub enum QueueType {
 #[derive(Debug)]
 pub struct QueueFamilies {
     queues: HashMap<QueueType, Queue>,
-    queue_priorities: HashMap<vulkan::QueueFamilyIndex, Vec<f32>>,
+    queue_priorities: HashMap<super::QueueFamilyIndex, Vec<f32>>,
 }
 
 impl QueueFamilies {
-    pub fn new_empty(queue_family_map: &vulkan::QueueFamilyMap) -> Self {
+    pub fn new_empty(queue_family_map: &super::QueueFamilyMap) -> Self {
         let mut queues = HashMap::new();
         queues.insert(QueueType::Graphics, Queue::new_empty(*queue_family_map.get_queue_info(vk::QueueFlags::GRAPHICS).expect(GRAPHICS), 1.0));
         Self {
@@ -58,7 +61,7 @@ impl QueueFamilies {
     }
 
     #[inline]
-    pub fn query_present_mode_queue(mut self, queue_family_map: &vulkan::QueueFamilyMap, instance: &vulkan::Instance, physical_device: vk::PhysicalDevice, surface: &vulkan::Surface) -> VkResult<Self> {
+    pub fn query_present_mode_queue(mut self, queue_family_map: &super::QueueFamilyMap, instance: &super::Instance, physical_device: vk::PhysicalDevice, surface: &super::Surface) -> VkResult<Self> {
         for (_, queue_info) in queue_family_map.inner().iter() {
             if instance.get_physical_device_surface_support(physical_device, queue_info.0, surface)? {
                 self.queues.insert(QueueType::PresentMode, Queue::new_empty(*queue_info, 1.0));
@@ -68,11 +71,11 @@ impl QueueFamilies {
         Ok(self)
     }
 
-    pub fn populate_handles(&mut self, device: &vulkan::Device) {
+    pub fn populate_handles(&mut self, device: &super::Device) {
         self.queues.values_mut().for_each(|queue| queue.populate_handle(device));
     }
 
-    pub fn get_queue_create_infos(&mut self, queue_family_map: &vulkan::QueueFamilyMap) -> Vec<vk::DeviceQueueCreateInfo> {
+    pub fn get_queue_create_infos(&mut self, queue_family_map: &super::QueueFamilyMap) -> Vec<vk::DeviceQueueCreateInfo> {
         // Detect queue families and map them to their length.
         let mut family2len_map = HashMap::new();
         for (_, (queue_family_index, queue_index)) in queue_family_map.inner().iter() {
@@ -104,6 +107,10 @@ impl QueueFamilies {
         }
 
         create_infos
+    }
+
+    pub fn submit_queue<'a>(&self, device: &super::Device, queue_type: QueueType, submit: &'a vk::SubmitInfo2<'a>, fence: vk::Fence) -> VkResult<()> {
+        device.submit_queue(self.get_queue(queue_type).handle.expect("queue must be initialized before being submitted"), submit, fence)
     }
 
     fn get_queue(&self, queue_type: QueueType) -> &Queue {

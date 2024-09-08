@@ -8,14 +8,14 @@ use crate::constants;
 pub struct Swapchain {
     handle: vk::SwapchainKHR,
     device: khr::swapchain::Device,
-    images: Vec<vk::Image>,
+    images: Vec<super::Image>,
     image_view: Vec<super::ImageView>,
     format: vk::Format,
     extent: vk::Extent2D,
 }
 
 impl Swapchain {
-    pub(super) fn new(handle: vk::SwapchainKHR, device: khr::swapchain::Device, images: Vec<vk::Image>, image_view: Vec<super::ImageView>, format: vk::Format, extent: vk::Extent2D) -> Self {
+    pub(super) fn new(handle: vk::SwapchainKHR, device: khr::swapchain::Device, images: Vec<super::Image>, image_view: Vec<super::ImageView>, format: vk::Format, extent: vk::Extent2D) -> Self {
         Self {
             handle,
             device,
@@ -26,11 +26,28 @@ impl Swapchain {
         }
     }
 
-    pub fn acquire_next_image(&self, frame: &super::commands::Frame) -> VkResult<Option<vk::Image>> {
+    #[inline]
+    pub fn handle(&self) -> vk::SwapchainKHR {
+        self.handle
+    }
+
+    #[inline]
+    pub fn acquire_next_image(&self, frame: &super::commands::Frame) -> VkResult<u32> {
         // SAFETY: The device is available at this point.
         Ok(
-            unsafe { self.images.get(self.device.acquire_next_image(self.handle, constants::FENCE_TIMEOUT, frame.swapchain_semaphore(), vk::Fence::null())?.0 as usize).copied() }
+            unsafe { self.device.acquire_next_image(self.handle, constants::FENCE_TIMEOUT, frame.swapchain_semaphore(), vk::Fence::null())?.0 }
         )
+    }
+
+    #[inline]
+    pub fn get_image(&self, image_index: u32) -> Option<&super::Image> {
+        self.images.get(image_index as usize)
+    }
+
+    #[inline]
+    pub fn present_queue<'a>(&self, queue: &super::queues::Queue, present_info: &'a vk::PresentInfoKHR<'a>) -> VkResult<bool> {
+        // SAFETY: The object needs no additional allocation function.
+        unsafe { self.device.queue_present(queue.handle(), present_info) }
     }
 }
 
