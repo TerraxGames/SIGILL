@@ -164,12 +164,7 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> RenderResult<()> {
                                     .a(vk::ComponentSwizzle::IDENTITY)
                             )
                             .subresource_range(
-                                vk::ImageSubresourceRange::default()
-                                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                    .base_mip_level(0)
-                                    .level_count(1)
-                                    .base_array_layer(0)
-                                    .layer_count(1)
+                                vulkan::util::image_subresource_range(vk::ImageAspectFlags::COLOR)
                             )
                     })
             )
@@ -204,7 +199,7 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> RenderResult<()> {
     Ok(())
 }
 
-pub fn render(app: &mut App) -> RenderResult<()> {
+pub fn begin_render(app: &mut App) -> RenderResult<()> {
     app.window().request_redraw();
 
     let render_data = app.render_data_mut();
@@ -213,28 +208,48 @@ pub fn render(app: &mut App) -> RenderResult<()> {
     // Wait until the GPU has finished rendering the last frame.
     current_frame.wait_for_render()?;
 
-    // Request image from the swapchain.
-    let swapchain = instance.swapchain();
-    let swapchain_image_index = swapchain.acquire_next_image(current_frame)?;
-    let swapchain_image = swapchain.get_image(swapchain_image_index).expect("image should have been present in swapchain");
-
     // Prepare command buffer.
     let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
         .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     current_frame.reset_command_buffer()?;
     current_frame.begin_command_buffer(command_buffer_begin_info)?;
-    current_frame.transition_image(swapchain_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL)?;
+    current_frame.transition_image(instance.draw_image().image(), vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL)?;
+
+    Ok(())
+}
+
+pub fn render_background(app: &mut App) -> RenderResult<()> {
+    let render_data = app.render_data_mut();
+    let instance = &mut render_data.instance;
+    let current_frame = instance.framebuffer().current_frame();
 
     // Draw flashing color.
-    let flash = f32::abs(f32::sin(std::f32::consts::PI * instance.framebuffer().current_frame_count() as f32 / 360.0));
+    let flash = f32::abs(f32::sin(std::f32::consts::PI * instance.framebuffer().current_frame_count() as f32 / (144.0 * 16.0)));
     let clear_color = vk::ClearColorValue {
         float32: [0.2 * flash, 0.25 * flash, flash, 1.0],
     };
     let clear_range = vulkan::util::image_subresource_range(vk::ImageAspectFlags::COLOR);
-    current_frame.cmd_clear_color_image(swapchain_image, vk::ImageLayout::GENERAL, clear_color, &[clear_range]);
+    current_frame.cmd_clear_color_image(instance.draw_image().image(), vk::ImageLayout::GENERAL, clear_color, &[clear_range]);
 
-    // Transition swapchain image back and end command buffer.
-    current_frame.transition_image(swapchain_image, vk::ImageLayout::GENERAL, vk::ImageLayout::PRESENT_SRC_KHR)?;
+    Ok(())
+}
+
+pub fn end_render(app: &mut App) -> RenderResult<()> {
+    let render_data = app.render_data_mut();
+    let instance = &mut render_data.instance;
+    let current_frame = instance.framebuffer().current_frame();
+
+    // Request image from the swapchain.
+    let swapchain = instance.swapchain();
+    let swapchain_image_index = swapchain.acquire_next_image(current_frame)?;
+    let swapchain_image = swapchain.get_image(swapchain_image_index).expect("image should have been present in swapchain");
+
+    // Transition draw image back, copy it to the swapchain image, and end command buffer.
+    current_frame.transition_image(instance.draw_image().image(), vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)?;
+    current_frame.transition_image(swapchain_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL)?;
+    let image_subresource_layers = vulkan::util::image_subresource_layers(vk::ImageAspectFlags::COLOR);
+    vulkan::util::memcpy_image(current_frame, instance.draw_image().image(), swapchain_image, instance.draw_image().extent(), swapchain.extent(), image_subresource_layers, image_subresource_layers);
+    current_frame.transition_image(swapchain_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR)?;
     current_frame.end_command_buffer()?;
 
     // Prepare queue submission.

@@ -37,4 +37,9 @@ impl AllocatedImage {
     pub fn image_view(&self) -> &super::ImageView {
         &self.image_view
     }
+
+    #[inline]
+    pub fn extent(&self) -> vk::Extent3D {
+        self.extent
+    }
 }

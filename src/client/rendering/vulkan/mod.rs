@@ -224,7 +224,7 @@ impl Instance {
                     images,
                     image_view,
                     create_info.image_format,
-                    create_info.image_extent,
+                    create_info.image_extent.into(),
                 )
             }
         );

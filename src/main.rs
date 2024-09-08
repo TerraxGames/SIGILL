@@ -99,7 +99,9 @@ impl winit::application::ApplicationHandler for App {
                 event_loop.exit();
             },
             WindowEvent::RedrawRequested => {
-                client::rendering::render(self).expect("error redrawing");
+                client::rendering::begin_render(self).expect("error beginning rendering");
+                client::rendering::render_background(self).expect("error rendering background");
+                client::rendering::end_render(self).expect("error ending rendering");
             },
             _ => (),
         }

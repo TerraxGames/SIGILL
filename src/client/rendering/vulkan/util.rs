@@ -49,6 +49,15 @@ pub fn image_subresource_range(aspect_flags: vk::ImageAspectFlags) -> vk::ImageS
 }
 
 #[inline]
+pub fn image_subresource_layers(aspect_flags: vk::ImageAspectFlags) -> vk::ImageSubresourceLayers {
+    vk::ImageSubresourceLayers::default()
+        .aspect_mask(aspect_flags)
+        .mip_level(0)
+        .base_array_layer(0)
+        .layer_count(1)
+}
+
+#[inline]
 pub fn semaphore_submit_info<'a>(stage_mask: vk::PipelineStageFlags2, semaphore: vk::Semaphore) -> vk::SemaphoreSubmitInfo<'a> {
     semaphore_submit_info_ex(stage_mask, semaphore, 0, 1)
 }
@@ -97,7 +106,7 @@ pub fn image_info_2d<'a>(format: vk::Format, extent: vk::Extent2D, image_usage_f
         format,
         extent.into(),
         vk::ImageType::TYPE_2D,
-        constants::MIP_LEVELS,
+        1,
         constants::SAMPLES,
         image_usage_flags,
     )
@@ -122,12 +131,7 @@ pub fn image_view_create_info_2d<'a>(format: vk::Format, image: Option<&super::I
         vk::ImageViewType::TYPE_2D,
         format,
         image,
-        vk::ImageSubresourceRange::default()
-            .base_mip_level(0)
-            .level_count(constants::MIP_LEVELS)
-            .base_array_layer(0)
-            .layer_count(1)
-            .aspect_mask(image_aspect_flags),
+        image_subresource_range(image_aspect_flags),
     )
 }
 

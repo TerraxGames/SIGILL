@@ -38,7 +38,7 @@ pub const QUEUE_FAMILIES: LazyLock<&'static [vk::QueueFlags]> = LazyLock::new(||
 );
 pub const FRAMEBUFFER_SIZE: usize = 2;
 pub const FENCE_TIMEOUT: u64 = Duration::from_secs(1).as_nanos() as u64;
-pub const MIP_LEVELS: u32 = 1;
+pub const MIP_LEVEL: u32 = 0;
 pub const SAMPLES: vk::SampleCountFlags = vk::SampleCountFlags::TYPE_1;
 
 // Logging

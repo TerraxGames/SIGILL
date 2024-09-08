@@ -11,11 +11,11 @@ pub struct Swapchain {
     images: Vec<super::Image>,
     image_view: Vec<super::ImageView>,
     format: vk::Format,
-    extent: vk::Extent2D,
+    extent: vk::Extent3D,
 }
 
 impl Swapchain {
-    pub(super) fn new(handle: vk::SwapchainKHR, device: khr::swapchain::Device, images: Vec<super::Image>, image_view: Vec<super::ImageView>, format: vk::Format, extent: vk::Extent2D) -> Self {
+    pub(super) fn new(handle: vk::SwapchainKHR, device: khr::swapchain::Device, images: Vec<super::Image>, image_view: Vec<super::ImageView>, format: vk::Format, extent: vk::Extent3D) -> Self {
         Self {
             handle,
             device,
@@ -29,6 +29,11 @@ impl Swapchain {
     #[inline]
     pub fn handle(&self) -> vk::SwapchainKHR {
         self.handle
+    }
+    
+    #[inline]
+    pub fn extent(&self) -> vk::Extent3D {
+        self.extent
     }
 
     #[inline]
