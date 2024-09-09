@@ -224,7 +224,8 @@ pub fn render_background(app: &mut App) -> RenderResult<()> {
     let current_frame = instance.framebuffer().current_frame();
 
     // Draw flashing color.
-    let flash = f32::abs(f32::sin(std::f32::consts::PI * instance.framebuffer().current_frame_count() as f32 / (144.0 * 16.0)));
+    // \frac{\sin\left(x\right)+1.0}{2}
+    let flash = (f32::sin(std::f32::consts::FRAC_PI_2 * instance.framebuffer().current_frame_count() as f32 / (144.0 * 16.0) + 1.0)) / 2.0;
     let clear_color = vk::ClearColorValue {
         float32: [0.2 * flash, 0.25 * flash, flash, 1.0],
     };
