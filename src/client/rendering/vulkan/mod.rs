@@ -137,7 +137,6 @@ impl Instance {
 		self.get_object(VulkanObjectType::Device).expect("device must be initialized before being accessed")
 	}
 
-	// TODO: Implement deque-based Vulkan object destruction system.
 	#[inline]
 	pub fn get_object<T: Any>(&self, object_type: VulkanObjectType) -> Option<&T> {
 		self.objects.get(&object_type)?.downcast_ref()
