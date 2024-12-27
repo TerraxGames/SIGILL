@@ -9,6 +9,7 @@ use crate::*;
 pub mod vulkan;
 pub mod log;
 pub mod device;
+pub mod stage;
 
 #[allow(unused)]
 pub struct RenderData {
