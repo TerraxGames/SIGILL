@@ -19,6 +19,9 @@ pub mod commands;
 pub mod util;
 pub mod queues;
 pub mod image;
+pub mod object;
+
+pub use object::*;
 
 pub type QueueFamilyIndex = u32;
 pub type QueueIndex = u32;
@@ -31,31 +34,30 @@ pub type QueueIndex = u32;
 /// 
 /// See [`VulkanObjectType`].
 #[derive(Deref, DerefMut)]
-pub struct VulkanObject<T, D>(T, D, fn(&T, &mut D));
+pub struct LegacyVulkanObject<T, D>(T, D, fn(&T, &mut D));
 
-impl<T, D> VulkanObject<T, D> {
+impl<T, D> LegacyVulkanObject<T, D> {
 	pub fn new(object: T, data: D, destructor: fn(&T, &mut D)) -> Self {
 		Self(object, data, destructor)
 	}
 }
 
-impl<T, D> VulkanObject<T, Option<D>> {
+impl<T, D> LegacyVulkanObject<T, Option<D>> {
 	fn undropped(object: T) -> Self {
 		Self(object, None, |_, _| {})
 	}
 }
 
-impl<T, D> Drop for VulkanObject<T, D> {
+impl<T, D> Drop for LegacyVulkanObject<T, D> {
 	fn drop(&mut self) {
 		(self.2)(&self.0, &mut self.1);
 	}
 }
 
 // Some types for Object
-pub type DebugUtilsMessenger = VulkanObject<vk::DebugUtilsMessengerEXT, ext::debug_utils::Instance>;
-pub type Surface = VulkanObject<vk::SurfaceKHR, khr::surface::Instance>;
-pub type ImageView = VulkanObject<vk::ImageView, ash::Device>;
-pub type Image = VulkanObject<vk::Image, Option<(Rc<vk_mem::Allocator>, vk_mem::Allocation)>>;
+pub type Surface = LegacyVulkanObject<vk::SurfaceKHR, khr::surface::Instance>;
+pub type ImageView = LegacyVulkanObject<vk::ImageView, ash::Device>;
+pub type Image = LegacyVulkanObject<vk::Image, Option<(Rc<vk_mem::Allocator>, vk_mem::Allocation)>>;
 
 /// A type of Vulkan object that is automatically dropped in order of dependency.
 /// # Safety
@@ -63,7 +65,7 @@ pub type Image = VulkanObject<vk::Image, Option<(Rc<vk_mem::Allocator>, vk_mem::
 #[repr(u32)]
 #[derive(Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VulkanObjectType {
-	TriangleShader,
+	GraphicsPipeline,
 
 	DrawImage,
 
@@ -88,6 +90,21 @@ pub struct Instance {
 	entry: ash::Entry,
 }
 
+macro_rules! object_type {
+	($name:ident: $ty:ty, $variant:expr) => {
+		#[inline]
+		pub fn $name(&self) -> &$ty {
+			self.get_object($variant).expect(format!("{} must be initialized before being accessed", stringify!($name)).as_str())
+		}
+	};
+	($name:ident: mut $ty:ty, $variant:expr) => {
+		#[inline]
+		pub fn $name(&mut self) -> &mut $ty {
+			self.get_object_mut($variant).expect(format!("{} must be initialized before being accessed", stringify!($name)).as_str())
+		}
+	};
+}
+
 impl Instance {
 	pub fn new(entry: ash::Entry, instance_info: &vk::InstanceCreateInfo) -> RenderResult<Self> {
 		// SAFETY: The object is automatically dropped.
@@ -102,40 +119,21 @@ impl Instance {
 
 	// Vulkan Object Management
 
-	#[inline]
-	pub fn debug_utils_messenger(&self) -> &DebugUtilsMessenger {
-		self.get_object(VulkanObjectType::DebugUtilsMessenger).expect("debug_utils_messenger must be initialized before being accessed")
-	}
+	object_type!(debug_utils_messenger: DebugUtilsMessenger, VulkanObjectType::DebugUtilsMessenger);
 
-	#[inline]
-	pub fn draw_image(&self) -> &image::AllocatedImage {
-		self.get_object(VulkanObjectType::DrawImage).expect("draw_image must be initialized before being accessed")
-	}
+	object_type!(pipeline: pipeline::GraphicsPipeline, VulkanObjectType::GraphicsPipeline);
 
-	#[inline]
-	pub fn framebuffer(&self) -> &commands::Framebuffer {
-		self.get_object(VulkanObjectType::Framebuffer).expect("framebuffer must be initialized before being accessed")
-	}
+	object_type!(draw_image: image::AllocatedImage, VulkanObjectType::DrawImage);
 
-	#[inline]
-	pub fn framebuffer_mut(&mut self) -> &mut commands::Framebuffer {
-		self.get_object_mut(VulkanObjectType::Framebuffer).expect("framebuffer must be initialized before being accessed")
-	}
+	object_type!(framebuffer: commands::Framebuffer, VulkanObjectType::Framebuffer);
 
-	#[inline]
-	pub fn swapchain(&self) -> &swapchain::Swapchain {
-		self.get_object(VulkanObjectType::Swapchain).expect("swapchain must be initialized before being accessed")
-	}
+	object_type!(framebuffer_mut: mut commands::Framebuffer, VulkanObjectType::Framebuffer);
 
-	#[inline]
-	pub fn surface(&self) -> &Surface {
-		self.get_object(VulkanObjectType::Surface).expect("surface must be initialized before being accessed")
-	}
+	object_type!(swapchain: swapchain::Swapchain, VulkanObjectType::Swapchain);
 
-	#[inline]
-	pub fn device(&self) -> &Device {
-		self.get_object(VulkanObjectType::Device).expect("device must be initialized before being accessed")
-	}
+	object_type!(surface: Surface, VulkanObjectType::Surface);
+
+	object_type!(device: Device, VulkanObjectType::Device);
 
 	#[inline]
 	pub fn get_object<T: Any>(&self, object_type: VulkanObjectType) -> Option<&T> {
@@ -190,11 +188,10 @@ impl Instance {
 		self.set_object(
 			VulkanObjectType::DebugUtilsMessenger,
 			unsafe {
-				VulkanObject::new(
-					self.extensions.debug_utils.create_debug_utils_messenger(create_info, None)?,
-					self.extensions.debug_utils.clone(),
-					|messenger, data| data.destroy_debug_utils_messenger(*messenger, None)
-				)
+				DebugUtilsMessenger::new(
+					create_info,
+					self.extensions.debug_utils.clone()
+				)?
 			},
 		);
 		Ok(self.debug_utils_messenger())
@@ -211,7 +208,7 @@ impl Instance {
 				let handle = swapchain_device.create_swapchain(create_info, None)?;
 				let images = swapchain_device.get_swapchain_images(handle)?
 					.into_iter()
-					.map(|image| VulkanObject::undropped(image))
+					.map(|image| LegacyVulkanObject::undropped(image))
 					.collect::<Vec<_>>();
 				let image_view = image_view_provider(&images, create_info.image_format)
 					.into_iter()
@@ -238,7 +235,7 @@ impl Instance {
 		self.set_object(
 			VulkanObjectType::Surface, 
 			unsafe {
-				VulkanObject::new(
+				LegacyVulkanObject::new(
 					ash_window::create_surface(self.entry(), &self.inner, display_handle, window_handle, None)?,
 					khr::surface::Instance::new(self.entry(), &self.inner),
 					|surface, instance| instance.destroy_surface(*surface, None),
@@ -267,15 +264,6 @@ impl Instance {
 			},
 		);
 		Ok(self.device())
-	}
-
-	#[inline]
-	fn create_shader_module(&mut self, object_type: VulkanObjectType, create_info: &vk::ShaderModuleCreateInfo, path: PathBuf) -> VkResult<&shader::ShaderModule> {
-		self.set_object(
-			object_type,
-			shader::ShaderModule::new(self.device().inner.clone(), create_info, path),
-		);
-		Ok(self.get_object(object_type).unwrap())
 	}
 
 	#[inline]
@@ -427,7 +415,7 @@ impl Device {
 			};
 			let image = self.allocator.create_image(create_info, &allocation_create_info)?;
 			Ok(
-				VulkanObject::new(
+				LegacyVulkanObject::new(
 					image.0,
 					Some((self.allocator.clone(), image.1)),
 					|image, data| {
@@ -444,7 +432,7 @@ impl Device {
 		// SAFETY: The object is automatically destroyed.
 		unsafe {
 			Ok(
-				VulkanObject::new(
+				LegacyVulkanObject::new(
 					self.inner.create_image_view(create_info, None)?,
 					self.inner.clone(),
 					|image_view, device| device.destroy_image_view(*image_view, None),
