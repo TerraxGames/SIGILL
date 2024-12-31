@@ -2,12 +2,16 @@
 //! This module provides safe abstractions for Vulkan objects.
 //!
 //! See [`VulkanObject`] and [`Instance`].
+//! 
+//! # Safety Guarantees
+//! For creation methods, the object is automatically dropped, and the data is initialized.
+//! 
+//! For extension getters, the extensions are already initialized.
 
-use std::{any::Any, borrow::BorrowMut, collections::HashMap, mem::ManuallyDrop, ops::Deref, path::PathBuf, ptr::drop_in_place, rc::Rc};
+use std::{any::Any, borrow::BorrowMut, collections::HashMap, mem::ManuallyDrop, ptr::drop_in_place, rc::Rc};
 
 use ash::{ext, khr, prelude::VkResult, vk};
 use sigill_derive::{Deref, DerefMut};
-use vk_mem::Alloc;
 use winit::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use super::RenderResult;
@@ -34,30 +38,28 @@ pub type QueueIndex = u32;
 /// 
 /// See [`VulkanObjectType`].
 #[derive(Deref, DerefMut)]
-pub struct LegacyVulkanObject<T, D>(T, D, fn(&T, &mut D));
+pub struct CustomVulkanObject<T, D>(T, D, fn(&T, &mut D));
 
-impl<T, D> LegacyVulkanObject<T, D> {
+impl<T, D> CustomVulkanObject<T, D> {
 	pub fn new(object: T, data: D, destructor: fn(&T, &mut D)) -> Self {
 		Self(object, data, destructor)
 	}
 }
 
-impl<T, D> LegacyVulkanObject<T, Option<D>> {
+impl<T, D> CustomVulkanObject<T, Option<D>> {
 	fn undropped(object: T) -> Self {
 		Self(object, None, |_, _| {})
 	}
 }
 
-impl<T, D> Drop for LegacyVulkanObject<T, D> {
+impl<T, D> Drop for CustomVulkanObject<T, D> {
 	fn drop(&mut self) {
 		(self.2)(&self.0, &mut self.1);
 	}
 }
 
 // Some types for Object
-pub type Surface = LegacyVulkanObject<vk::SurfaceKHR, khr::surface::Instance>;
-pub type ImageView = LegacyVulkanObject<vk::ImageView, ash::Device>;
-pub type Image = LegacyVulkanObject<vk::Image, Option<(Rc<vk_mem::Allocator>, vk_mem::Allocation)>>;
+pub type Surface = CustomVulkanObject<vk::SurfaceKHR, khr::surface::Instance>;
 
 /// A type of Vulkan object that is automatically dropped in order of dependency.
 /// # Safety
@@ -158,25 +160,21 @@ impl Instance {
 
 	#[inline]
 	pub fn get_physical_device_surface_support(&self, physical_device: vk::PhysicalDevice, queue_family_index: QueueFamilyIndex, surface: &Surface) -> VkResult<bool> {
-		// SAFETY: The object needs no additional allocation.
 		unsafe { self.extensions.surface.get_physical_device_surface_support(physical_device, queue_family_index, surface.0) }
 	}
 
 	#[inline]
 	pub fn get_physical_device_surface_capabilities(&self, physical_device: vk::PhysicalDevice, surface: &Surface) -> VkResult<vk::SurfaceCapabilitiesKHR> {
-		// SAFETY: The object needs no additional allocation function.
 		unsafe { self.extensions.surface.get_physical_device_surface_capabilities(physical_device, surface.0) }
 	}
 
 	#[inline]
 	pub fn get_physical_device_surface_formats(&self, physical_device: vk::PhysicalDevice, surface: &Surface) -> VkResult<Vec<vk::SurfaceFormatKHR>> {
-		// SAFETY: The object needs no additional allocation function.
 		unsafe { self.extensions.surface.get_physical_device_surface_formats(physical_device, surface.0) }
 	}
 
 	#[inline]
 	pub fn get_physical_device_surface_present_modes(&self, physical_device: vk::PhysicalDevice, surface: &Surface) -> VkResult<Vec<vk::PresentModeKHR>> {
-		// SAFETY: The object needs no additional allocation function.
 		unsafe { self.extensions.surface.get_physical_device_surface_present_modes(physical_device, surface.0) }
 	}
 
@@ -184,7 +182,6 @@ impl Instance {
 
 	#[inline]
 	pub fn create_debug_utils_messenger_ext(&mut self, create_info: &vk::DebugUtilsMessengerCreateInfoEXT) -> VkResult<&DebugUtilsMessenger> {
-		// SAFETY: The object is automatically dropped.
 		self.set_object(
 			VulkanObjectType::DebugUtilsMessenger,
 			unsafe {
@@ -201,15 +198,18 @@ impl Instance {
 	#[inline]
 	pub fn create_swapchain<'a>(&mut self, create_info: &vk::SwapchainCreateInfoKHR, image_view_provider: impl FnOnce(&Vec<Image>, vk::Format) -> Vec<vk::ImageViewCreateInfo<'a>>) -> VkResult<&swapchain::Swapchain> {
 		let swapchain_device = khr::swapchain::Device::new(&self.inner, &self.device().inner);
-		// SAFETY: The object is automatically dropped.
 		self.set_object(
 			VulkanObjectType::Swapchain,
-			unsafe {
-				let handle = swapchain_device.create_swapchain(create_info, None)?;
-				let images = swapchain_device.get_swapchain_images(handle)?
-					.into_iter()
-					.map(|image| LegacyVulkanObject::undropped(image))
-					.collect::<Vec<_>>();
+			{
+				// SAFETY: The object is automatically destroyed.
+				let handle = unsafe { swapchain_device.create_swapchain(create_info, None)? };
+				// SAFETY: The extension is already initialized.
+				let images = unsafe {
+					swapchain_device.get_swapchain_images(handle)?
+						.into_iter()
+						.map(|image| Image::from_object(image))
+						.collect::<Vec<_>>()
+				};
 				let image_view = image_view_provider(&images, create_info.image_format)
 					.into_iter()
 					.map(|create_info| self.device().create_image_view(&create_info))
@@ -235,7 +235,7 @@ impl Instance {
 		self.set_object(
 			VulkanObjectType::Surface, 
 			unsafe {
-				LegacyVulkanObject::new(
+				CustomVulkanObject::new(
 					ash_window::create_surface(self.entry(), &self.inner, display_handle, window_handle, None)?,
 					khr::surface::Instance::new(self.entry(), &self.inner),
 					|surface, instance| instance.destroy_surface(*surface, None),
@@ -404,7 +404,6 @@ impl Device {
 
 	// Object Creation
 
-	#[inline]
 	pub fn create_image(&self, create_info: &vk::ImageCreateInfo) -> VkResult<Image> {
 		// SAFETY: The object is automatically destroyed.
 		unsafe {
@@ -413,32 +412,15 @@ impl Device {
 				required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
 				..Default::default()
 			};
-			let image = self.allocator.create_image(create_info, &allocation_create_info)?;
-			Ok(
-				LegacyVulkanObject::new(
-					image.0,
-					Some((self.allocator.clone(), image.1)),
-					|image, data| {
-						let (allocator, allocation) = data.as_mut().unwrap();
-						allocator.destroy_image(*image, allocation);
-					},
-				)
+			Image::new(
+				&(*create_info, allocation_create_info),
+				self.allocator.clone(),
 			)
 		}
 	}
 
-	#[inline]
 	pub fn create_image_view(&self, create_info: &vk::ImageViewCreateInfo) -> VkResult<ImageView> {
-		// SAFETY: The object is automatically destroyed.
-		unsafe {
-			Ok(
-				LegacyVulkanObject::new(
-					self.inner.create_image_view(create_info, None)?,
-					self.inner.clone(),
-					|image_view, device| device.destroy_image_view(*image_view, None),
-				)
-			)
-		}
+		unsafe { ImageView::new(create_info, self.inner.clone()) }
 	}
 }
 

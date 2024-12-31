@@ -7,6 +7,8 @@ use ash::{prelude::VkResult, vk};
 
 use crate::constants;
 
+use super::WeakObject;
+
 /// A collection of a frame's Vulkan commands.
 pub struct Frame {
 	command_pool_handle: vk::CommandPool,
@@ -109,7 +111,7 @@ impl Frame {
 	#[inline]
 	pub fn cmd_clear_color_image(&self, image: &super::Image, image_layout: vk::ImageLayout, clear_color_value: vk::ClearColorValue, ranges: &[vk::ImageSubresourceRange]) {
 		// SAFETY: The device is available at this point.
-		unsafe { self.device.cmd_clear_color_image(self.command_buffer_handle, **image, image_layout, &clear_color_value, ranges); }
+		unsafe { self.device.cmd_clear_color_image(self.command_buffer_handle, *image.object(), image_layout, &clear_color_value, ranges); }
 	}
 
 	#[inline]
@@ -148,7 +150,7 @@ impl Frame {
 			.old_layout(old_layout)
 			.new_layout(new_layout)
 			.subresource_range(subresource_range)
-			.image(image.0);
+			.image(unsafe { *image.object() });
 		let image_barriers = [image_barrier];
 		let dependency_info = vk::DependencyInfo::default()
 			.image_memory_barriers(&image_barriers);

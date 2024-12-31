@@ -2,6 +2,7 @@ use std::{ffi::CStr, ops::Deref};
 
 use ash::vk;
 use thiserror::Error;
+use vulkan::WeakObject;
 use winit::{event_loop::ActiveEventLoop, raw_window_handle::{HandleError, HasDisplayHandle}};
 
 use crate::*;
@@ -154,7 +155,7 @@ pub fn init(app: &mut App, event_loop: &ActiveEventLoop) -> RenderResult<()> {
 					.iter()
 					.map(|image| {
 						vk::ImageViewCreateInfo::default()
-							.image(**image)
+							.image(unsafe { *image.object() })
 							.format(format)
 							.view_type(vk::ImageViewType::TYPE_2D)
 							.components(

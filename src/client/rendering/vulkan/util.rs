@@ -2,6 +2,8 @@ use ash::vk;
 
 use crate::constants;
 
+use super::WeakObject;
+
 /// metaphorically "memcpy"s an image to another image.
 /// i have nothing better to call this i promise.
 pub fn memcpy_image(frame: &super::commands::Frame, src: &super::Image, dst: &super::Image, src_size: vk::Extent3D, dst_size: vk::Extent3D, src_subresource: vk::ImageSubresourceLayers, dst_subresource: vk::ImageSubresourceLayers) {
@@ -27,9 +29,9 @@ pub fn memcpy_image(frame: &super::commands::Frame, src: &super::Image, dst: &su
 		.src_subresource(src_subresource)
 		.dst_subresource(dst_subresource);
 	let blit_info = vk::BlitImageInfo2::default()
-		.src_image(**src)
+		.src_image(unsafe { *src.object() })
 		.src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-		.dst_image(**dst)
+		.dst_image(unsafe { *dst.object() })
 		.dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
 		.filter(vk::Filter::LINEAR)
 		.regions(std::slice::from_ref(&blit_region));
@@ -142,7 +144,7 @@ pub fn image_view_create_info_ex<'a>(image_view_type: vk::ImageViewType, format:
 		.format(format)
 		.subresource_range(subresource_range);
 	if let Some(image) = image {
-		create_info = create_info.image(**image);
+		create_info = create_info.image(unsafe { *image.object() });
 	}
 
 	create_info

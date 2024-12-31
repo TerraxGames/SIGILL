@@ -15,7 +15,14 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-	pub(super) fn new(handle: vk::SwapchainKHR, device: khr::swapchain::Device, images: Vec<super::Image>, image_view: Vec<super::ImageView>, format: vk::Format, extent: vk::Extent3D) -> Self {
+	pub(super) fn new(
+		handle: vk::SwapchainKHR,
+		device: khr::swapchain::Device,
+		images: Vec<super::Image>,
+		image_view: Vec<super::ImageView>,
+		format: vk::Format,
+		extent: vk::Extent3D
+	) -> Self {
 		Self {
 			handle,
 			device,
